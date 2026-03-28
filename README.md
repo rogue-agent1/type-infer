@@ -1,5 +1,9 @@
 # type-infer
-Hindley-Milner type inference. Zero dependencies.
+
+Zero-dependency Python implementation.
+
+## Usage
+
 ```bash
 python3 type_infer.py
 ```

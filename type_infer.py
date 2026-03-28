@@ -1,77 +1,82 @@
 #!/usr/bin/env python3
-"""Hindley-Milner type inference from scratch."""
-import sys
-_n=0
-def fresh():
-    global _n; _n+=1; return f"t{_n}"
-class TVar:
-    def __init__(self,name): self.name=name
+"""Hindley-Milner type inference — zero-dep."""
+
+class Type:
+    pass
+
+class TVar(Type):
+    _counter=0
+    def __init__(self, name=None):
+        if name is None: TVar._counter+=1; name=f"t{TVar._counter}"
+        self.name=name
     def __repr__(self): return self.name
-class TFunc:
-    def __init__(self,a,b): self.arg=a; self.ret=b
+
+class TFun(Type):
+    def __init__(self, arg, ret): self.arg=arg; self.ret=ret
     def __repr__(self): return f"({self.arg} -> {self.ret})"
-class TConst:
-    def __init__(self,name): self.name=name
-    def __repr__(self): return self.name
-def occurs(v,t):
-    if isinstance(t,TVar): return t.name==v
-    if isinstance(t,TFunc): return occurs(v,t.arg) or occurs(v,t.ret)
-    return False
-def apply_sub(s,t):
-    if isinstance(t,TVar): return s.get(t.name,t)
-    if isinstance(t,TFunc): return TFunc(apply_sub(s,t.arg),apply_sub(s,t.ret))
+
+class TInt(Type):
+    def __repr__(self): return "Int"
+
+class TBool(Type):
+    def __repr__(self): return "Bool"
+
+class Subst(dict):
+    def apply(self, t):
+        if isinstance(t,TVar): return self.apply(self[t.name]) if t.name in self else t
+        if isinstance(t,TFun): return TFun(self.apply(t.arg),self.apply(t.ret))
+        return t
+    def compose(self, other):
+        s=Subst({k:self.apply(v) for k,v in other.items()})
+        s.update(self); return s
+
+def unify(t1, t2):
+    t1=resolve(t1); t2=resolve(t2)
+    if isinstance(t1,TVar): return Subst({t1.name:t2})
+    if isinstance(t2,TVar): return Subst({t2.name:t1})
+    if isinstance(t1,TInt) and isinstance(t2,TInt): return Subst()
+    if isinstance(t1,TBool) and isinstance(t2,TBool): return Subst()
+    if isinstance(t1,TFun) and isinstance(t2,TFun):
+        s1=unify(t1.arg,t2.arg); s2=unify(s1.apply(t1.ret),s1.apply(t2.ret))
+        return s2.compose(s1)
+    raise TypeError(f"Cannot unify {t1} with {t2}")
+
+_subst=Subst()
+def resolve(t):
+    while isinstance(t,TVar) and t.name in _subst: t=_subst[t.name]
     return t
-def unify(a,b,s=None):
-    if s is None: s={}
-    a=apply_sub(s,a); b=apply_sub(s,b)
-    if isinstance(a,TVar):
-        if a.name!=b.name if isinstance(b,TVar) else True:
-            if occurs(a.name,b): raise TypeError(f"Infinite type {a} ~ {b}")
-            s[a.name]=b
-    elif isinstance(b,TVar): unify(b,a,s)
-    elif isinstance(a,TFunc) and isinstance(b,TFunc):
-        unify(a.arg,b.arg,s); unify(a.ret,b.ret,s)
-    elif isinstance(a,TConst) and isinstance(b,TConst):
-        if a.name!=b.name: raise TypeError(f"Cannot unify {a} and {b}")
-    else: raise TypeError(f"Cannot unify {a} and {b}")
-    return s
-def infer(expr,env,s=None):
-    if s is None: s={}
+
+def infer(expr, env=None):
+    global _subst; env=env or {}
+    if isinstance(expr,int): return TInt()
+    if isinstance(expr,bool): return TBool()
     if isinstance(expr,str):
-        if expr.isdigit(): return TConst("Int"),s
-        if expr in env: return apply_sub(s,env[expr]),s
-        raise NameError(f"Undefined: {expr}")
+        if expr in env: return env[expr]
+        raise NameError(f"Unbound: {expr}")
     if isinstance(expr,tuple):
         if expr[0]=="lambda":
-            tv=TVar(fresh()); new_env={**env,expr[1]:tv}
-            bt,s=infer(expr[2],new_env,s)
-            return TFunc(apply_sub(s,tv),bt),s
+            _,param,body=expr; tv=TVar()
+            new_env=dict(env); new_env[param]=tv
+            ret=infer(body,new_env)
+            return TFun(tv,ret)
         if expr[0]=="let":
-            vt,s=infer(expr[2],env,s)
-            return infer(expr[3],{**env,expr[1]:vt},s)
-        ft,s=infer(expr[0],env,s)
-        at,s=infer(expr[1],env,s)
-        rt=TVar(fresh())
-        s=unify(ft,TFunc(at,rt),s)
-        return apply_sub(s,rt),s
-def main():
-    global _n; _n=0
-    env={"add":TFunc(TConst("Int"),TFunc(TConst("Int"),TConst("Int"))),
-         "true":TConst("Bool"),"false":TConst("Bool"),
-         "not":TFunc(TConst("Bool"),TConst("Bool"))}
-    exprs=[
-        ("42","42"),
-        ("true","true"),
-        (("lambda","x","x"),"λx.x"),
-        (("lambda","x",("lambda","y","x")),"λx.λy.x"),
-        ((("add","1"),"2"),"add 1 2"),
-        (("not","true"),"not true"),
-    ]
-    for expr,desc in exprs:
-        _n=0
+            _,name,val,body=expr
+            t=infer(val,env); new_env=dict(env); new_env[name]=t
+            return infer(body,new_env)
+        # Application
+        fn,arg=expr
+        tf=infer(fn,env); ta=infer(arg,env); tr=TVar()
+        s=unify(tf,TFun(ta,tr)); _subst.compose(s)
+        return s.apply(tr)
+
+if __name__=="__main__":
+    _subst=Subst()
+    tests=[(42,"literal int"),(True,"literal bool"),
+           (("lambda","x","x"),"identity"),
+           (("lambda","x",("lambda","y","x")),"const"),
+           (("let","id",("lambda","x","x"),("id",42)),"let + apply")]
+    for expr,desc in tests:
+        _subst=Subst(); TVar._counter=0
         try:
-            t,s=infer(expr,env)
-            print(f"{desc} : {apply_sub(s,t)}")
-        except Exception as e:
-            print(f"{desc} : ERROR {e}")
-if __name__=="__main__": main()
+            t=infer(expr); print(f"  {desc}: {t}")
+        except Exception as e: print(f"  {desc}: Error — {e}")
