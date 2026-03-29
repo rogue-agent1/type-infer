@@ -54,8 +54,8 @@ def unify(a, b):
 
 def infer(expr, env=None):
     env = env or {}
-    if isinstance(expr, int): return Int
     if isinstance(expr, bool): return Bool
+    if isinstance(expr, int): return Int
     if isinstance(expr, str):
         if expr in env: return env[expr]
         raise NameError(f"Undefined: {expr}")
