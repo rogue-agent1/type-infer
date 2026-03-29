@@ -1,6 +1,6 @@
 # type-infer
 
-Hindley-Milner type inference with unification, let-polymorphism, and type schemes
+Hindley-Milner Type Inference. Zero-dependency, single-file Python CLI.
 
 ## Usage
 
@@ -8,7 +8,6 @@ Hindley-Milner type inference with unification, let-polymorphism, and type schem
 python3 type_infer.py --help
 ```
 
-## Features
+## License
 
-- Zero dependencies (Python 3.8+ stdlib only)
-- Single file implementation
+MIT
