@@ -1,9 +1,9 @@
-# type_infer
+# type-infer
 
-Hindley-Milner type inference with unification, lambda, let, if expressions
+Hindley-Milner type inference. Zero dependencies, single file, Python 3.8+.
+
+## Usage
 
 ```bash
-python3 type_infer.py test
+python3 type_infer.py --help
 ```
-
-Zero deps. Python 3.8+.
