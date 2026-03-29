@@ -1,99 +1,99 @@
 #!/usr/bin/env python3
-"""Hindley-Milner Type Inference - Infer types for a simple functional language."""
-import sys
+"""type_infer - Hindley-Milner type inference engine."""
+import argparse
 
-class TVar:
-    _id = 0
-    def __init__(self):
-        self.id = TVar._id; TVar._id += 1; self.instance = None
-    def __repr__(self): return f"t{self.id}" if not self.instance else repr(self.instance)
+class Type: pass
+class TVar(Type):
+    _id=0
+    def __init__(self,name=None):
+        if name is None: TVar._id+=1;name=f"t{TVar._id}"
+        self.name=name
+    def __repr__(self): return self.name
+class TCon(Type):
+    def __init__(self,name): self.name=name
+    def __repr__(self): return self.name
+class TFun(Type):
+    def __init__(self,arg,ret): self.arg,self.ret=arg,ret
+    def __repr__(self): return f"({self.arg} -> {self.ret})"
 
-class TCon:
-    def __init__(self, name, args=None):
-        self.name = name; self.args = args or []
-    def __repr__(self):
-        if not self.args: return self.name
-        if self.name == "->": return f"({self.args[0]} -> {self.args[1]})"
-        return f"{self.name}[{', '.join(map(repr, self.args))}]"
+INT=TCon("Int");BOOL=TCon("Bool");STRING=TCon("String")
 
-Int = TCon("Int"); Bool = TCon("Bool"); Str = TCon("String")
+class Expr: pass
+class EVar(Expr):
+    def __init__(s,n): s.name=n
+class EInt(Expr):
+    def __init__(s,v): s.value=v
+class EBool(Expr):
+    def __init__(s,v): s.value=v
+class EApp(Expr):
+    def __init__(s,f,a): s.fn,s.arg=f,a
+class ELam(Expr):
+    def __init__(s,p,b): s.param,s.body=p,b
+class ELet(Expr):
+    def __init__(s,n,v,b): s.name,s.val,s.body=n,v,b
+class EIf(Expr):
+    def __init__(s,c,t,e): s.cond,s.then,s.else_=c,t,e
 
-def arrow(a, b): return TCon("->", [a, b])
-
-def prune(t):
-    if isinstance(t, TVar) and t.instance: t.instance = prune(t.instance); return t.instance
-    return t
-
-def occurs(v, t):
-    t = prune(t)
-    if t is v: return True
-    if isinstance(t, TCon): return any(occurs(v, a) for a in t.args)
-    return False
-
-def unify(a, b):
-    a, b = prune(a), prune(b)
-    if isinstance(a, TVar):
-        if a is not b:
-            if occurs(a, b): raise TypeError(f"Recursive type: {a} in {b}")
-            a.instance = b
-    elif isinstance(b, TVar): unify(b, a)
-    elif isinstance(a, TCon) and isinstance(b, TCon):
-        if a.name != b.name or len(a.args) != len(b.args):
-            raise TypeError(f"Cannot unify {a} with {b}")
-        for x, y in zip(a.args, b.args): unify(x, y)
-
-def infer(expr, env):
-    if isinstance(expr, str):
-        if expr.isdigit(): return Int
-        if expr in ("true", "false"): return Bool
-        if expr.startswith("\\"") and expr.endswith("\\""):  return Str
-        if expr in env: return env[expr]
-        raise NameError(f"Undefined: {expr}")
-    if isinstance(expr, list):
-        if expr[0] == "fn":
-            param, body = expr[1], expr[2]
-            tv = TVar(); new_env = {**env, param: tv}
-            ret = infer(body, new_env)
-            return arrow(tv, ret)
-        if expr[0] == "let":
-            name, val, body = expr[1], expr[2], expr[3]
-            t = infer(val, env)
-            return infer(body, {**env, name: t})
-        if expr[0] == "if":
-            cond, then, els = expr[1], expr[2], expr[3]
-            unify(infer(cond, env), Bool)
-            t = infer(then, env); unify(t, infer(els, env))
+class Substitution:
+    def __init__(self): self.mapping={}
+    def apply(self, t):
+        if isinstance(t,TVar):
+            if t.name in self.mapping: return self.apply(self.mapping[t.name])
             return t
-        func, arg = expr[0], expr[1]
-        ft = infer(func, env); at = infer(arg, env)
-        rt = TVar(); unify(ft, arrow(at, rt))
-        return prune(rt)
+        if isinstance(t,TCon): return t
+        if isinstance(t,TFun): return TFun(self.apply(t.arg),self.apply(t.ret))
+        return t
+    def unify(self, t1, t2):
+        t1,t2=self.apply(t1),self.apply(t2)
+        if isinstance(t1,TVar): self.mapping[t1.name]=t2;return
+        if isinstance(t2,TVar): self.mapping[t2.name]=t1;return
+        if isinstance(t1,TCon) and isinstance(t2,TCon) and t1.name==t2.name: return
+        if isinstance(t1,TFun) and isinstance(t2,TFun):
+            self.unify(t1.arg,t2.arg);self.unify(t1.ret,t2.ret);return
+        raise TypeError(f"Cannot unify {t1} with {t2}")
 
-def parse(s):
-    tokens = s.replace("(", " ( ").replace(")", " ) ").split()
-    pos = [0]
-    def read():
-        if tokens[pos[0]] == "(":
-            pos[0] += 1; lst = []
-            while tokens[pos[0]] != ")": lst.append(read())
-            pos[0] += 1; return lst
-        else:
-            t = tokens[pos[0]]; pos[0] += 1; return t
-    return read()
+def infer(expr, env, sub):
+    if isinstance(expr,EInt): return INT
+    if isinstance(expr,EBool): return BOOL
+    if isinstance(expr,EVar):
+        if expr.name not in env: raise NameError(f"Unbound: {expr.name}")
+        return env[expr.name]
+    if isinstance(expr,ELam):
+        tv=TVar(); new_env={**env,expr.param:tv}
+        ret=infer(expr.body,new_env,sub)
+        return TFun(sub.apply(tv),ret)
+    if isinstance(expr,EApp):
+        ft=infer(expr.fn,env,sub);at=infer(expr.arg,env,sub);rv=TVar()
+        sub.unify(ft,TFun(at,rv))
+        return sub.apply(rv)
+    if isinstance(expr,ELet):
+        vt=infer(expr.val,env,sub);new_env={**env,expr.name:vt}
+        return infer(expr.body,new_env,sub)
+    if isinstance(expr,EIf):
+        ct=infer(expr.cond,env,sub);sub.unify(ct,BOOL)
+        tt=infer(expr.then,env,sub);et=infer(expr.else_,env,sub)
+        sub.unify(tt,et);return sub.apply(tt)
+    raise TypeError(f"Unknown expr: {expr}")
 
 def main():
-    builtins = {"+": arrow(Int, arrow(Int, Int)), "-": arrow(Int, arrow(Int, Int)),
-                "*": arrow(Int, arrow(Int, Int)), "==": arrow(Int, arrow(Int, Bool)),
-                "not": arrow(Bool, Bool)}
-    if len(sys.argv) < 2:
-        print("Usage: type_infer.py <expr>"); print("Example: type_infer.py "(fn x (+ x 1))""); sys.exit(1)
-    expr = parse(sys.argv[1])
-    TVar._id = 0
-    try:
-        t = infer(expr, builtins)
-        print(f"Expression: {sys.argv[1]}"); print(f"Type: {prune(t)}")
-    except (TypeError, NameError) as e:
-        print(f"Type error: {e}")
+    p=argparse.ArgumentParser(description="HM type inference");args=p.parse_args()
+    env={"add":TFun(INT,TFun(INT,INT)),"eq":TFun(INT,TFun(INT,BOOL)),"not":TFun(BOOL,BOOL)}
+    tests=[
+        ("42",EInt(42)),
+        ("true",EBool(True)),
+        ("\\x.x",ELam("x",EVar("x"))),
+        ("\\x.\\y.x",ELam("x",ELam("y",EVar("x")))),
+        ("add 1",EApp(EVar("add"),EInt(1))),
+        ("let id=\\x.x in id 42",ELet("id",ELam("x",EVar("x")),EApp(EVar("id"),EInt(42)))),
+        ("if true then 1 else 2",EIf(EBool(True),EInt(1),EInt(2))),
+    ]
+    print("Hindley-Milner Type Inference:\n")
+    for desc,expr in tests:
+        sub=Substitution()
+        try:
+            t=infer(expr,env,sub);t=sub.apply(t)
+            print(f"  {desc:30s} : {t}")
+        except (TypeError,NameError) as e: print(f"  {desc:30s} : ERROR: {e}")
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
